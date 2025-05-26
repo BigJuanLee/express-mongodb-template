@@ -7,6 +7,7 @@ async function getDB(dbName = 'local') {
 
 async function getCollection(dbName, collectionName) {
     const db = await getDB(dbName)
+    // db.collection(collectionName).createIndex({ 'length': 1 }) //创建索引
     return db.collection(collectionName)
 }
 
