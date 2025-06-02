@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { getCollection } = require('../utils/dbHelper')
+const { mongoClient } = require('../utils/connect')
 const { ObjectId } = require('mongodb')
 
 router.get('/logs', async (req, res) => {
@@ -39,11 +40,12 @@ router.get('/logs', async (req, res) => {
         // const data = await bookCollection.find(query, projection).toArray()
         const {
             // searchKey = {},
-            sortBy = "",
+            sortBy,
             page = 1,
             pageSize = 10
         } = req.query
-
+        const cleanSortBy = (typeof sortBy === 'string' ? sortBy.trim() : '');
+        const sortOption = cleanSortBy ? { [cleanSortBy]: 1 } : {};
         /*
             find方法返回cursor对象不能直接转换成json返回
             toArray()、forEach 或 next() 提取文档数据
@@ -55,7 +57,7 @@ router.get('/logs', async (req, res) => {
             })
             res.json(result)
         */
-        const data = await bookCollection.find({}, projection).sort({ [sortBy]: 1 }).skip((page - 1) * pageSize).limit(Number(pageSize)).toArray()
+        const data = await bookCollection.find({}, projection).sort(sortOption).skip((page - 1) * pageSize).limit(Number(pageSize)).toArray()
         /*
             estimatedDocumentCount 统计集合文档数，不支持查询条件
             countDocuments 精确统计 匹配查询条件 的文档数量
@@ -88,9 +90,15 @@ router.post('/insertMenu', async (req, res) => {
     try {
         const menuCollection = await getCollection('t_database', 'menu')
         const { name, shape, } = req.body
-        const result = await menuCollection.insertOne({ name, shape })
+
+        const result = await menuCollection.insertOne({
+            name,
+            shape
+        })
         res.json(result)
     } catch (error) {
+        console.log(error);
+
         res.status(500).json({ error })
     }
 })
@@ -102,6 +110,7 @@ router.post('/insertManyMenu', async (req, res) => {
         const result = await menuCollection.insertMany(docs)
         res.json(result)
     } catch (error) {
+        console.log(error);
         res.status(500).json({ message: error.errorResponse.message })
     }
 })
@@ -159,4 +168,270 @@ router.post('/deleteTruck', async (req, res) => {
     }
 })
 
+router.post('/transferAccount', async (req, res) => {
+    const client = await mongoClient
+    const session = client.startSession()
+    try {
+        const result = await session.withTransaction(async () => {
+            const accounts = await getCollection('t_database', 'accounts')
+            await accounts.updateOne(
+                { _id: "A" },
+                { $inc: { balance: -100 } },
+                { session }
+            );
+            await accounts.updateOne(
+                { _id: "B" },
+                { $inc: { balance: 100 } },
+                { session }
+            );
+            return { message: "转账成功" };
+        })
+        res.send({
+            success: true,
+            message: "事务提交成功",
+            data: result // 包含回调返回的数据
+        })
+    } catch (error) {
+        res.status(500).send({
+            success: false,
+            message: "转账失败",
+            error: error.message
+        });
+        console.log(error);
+
+    } finally {
+        session.endSession()
+    }
+
+    // try {
+    //     session.startTransaction();
+    //     const accounts = client.db("bank").collection("accounts");
+    //     await accounts.updateOne(
+    //         { _id: "A" },
+    //         { $inc: { balance: -100 } },
+    //         { session }
+    //     );
+    //     await accounts.updateOne(
+    //         { _id: "B" },
+    //         { $inc: { balance: 100 } },
+    //         { session }
+    //     );
+    //     await session.commitTransaction(); //提交事务
+    // } catch (error) {
+    //     await session.abortTransaction(); //回滚事务
+    //     throw error; 
+    // } finally {
+    //     session.endSession();
+    // }
+
+})
+//过滤的子集，查询最年轻的三个工程师按年龄从小到大排序
+router.get('/getYoungestEngineer', async (req, res) => {
+    try {
+        const personCollection = await getCollection('t_database', 'persons')
+        const pipeline = [
+            { $match: { "vocation": "ENGINEER" } },
+            { $sort: { "dateofbirth": -1 } },
+            { $limit: 3 },
+            { $unset: ["_id", "address"] }
+        ]
+        const result = await personCollection.aggregate(pipeline).toArray()//和find返回的是游标对象
+        console.log(result);
+
+        res.json(result)
+    } catch (error) {
+        console.log(error);
+        throw error
+    }
+
+})
+
+//群组和总计，查询给定客户的所有订单的详细信息，按客户的电子邮件地址分组
+router.get('/getOrderSummary', async (req, res) => {
+    try {
+        const orderCollection = await getCollection('t_database', 'orders')
+        const pipeline = [
+            {
+                $addFields: {
+                    parsedDate: { $dateFromString: { dateString: "$orderdate", timezone: "UTC", onError: null } }
+                }
+            },
+            {
+                $match: {
+                    parsedDate: {
+                        $gte: new Date("2020-01-01T00:00:00Z"),
+                        $lt: new Date("2021-01-01T00:00:00Z"),
+                    }
+                }
+            },
+            {
+                $sort: {
+                    orderdate: 1
+                }
+            },
+            {
+                $group: {
+                    _id: "$customer_id",
+                    first_purchase_date: { $first: "$orderdate" },
+                    total_value: { $sum: "$value" },
+                    total_orders: { $sum: 1 },
+                    orders: {
+                        $push: {
+                            orderdate: "$orderdate",
+                            value: "$value"
+                        }
+                    }
+                }
+            },
+            {
+                $sort: {
+                    first_purchase_date: 1
+                }
+            },
+            {
+                $set: { customer_id: "$_id" }
+            },
+            { $unset: ["_id"] }
+        ]
+        const result = await orderCollection.aggregate(pipeline).toArray()
+        res.json(result)
+    } catch (error) {
+        throw error
+    }
+})
+
+//解包数组和分组，查询成本超过 15 美元的产品订单的总值和数量的详细信息
+router.get('/getOrderSummary2', async (req, res) => {
+    try {
+        const orderCollection = await getCollection('t_database', 'order2')
+        const pipeline = [
+            { $unwind: { path: "$products" } },
+            {
+                $match: {
+                    "products.price": {
+                        $gt: 15
+                    }
+                }
+            },
+            {
+                $group: {
+                    _id: "$products.prod_id",
+                    product: { $first: "$products.name" },
+                    total_value: { $sum: "$products.price" },
+                    quantity: { $sum: 1 },
+
+                }
+            },
+            {
+                $set: { product_id: "$_id" }
+            },
+            { $unset: ["_id"] }
+        ]
+        const result = await orderCollection.aggregate(pipeline).toArray()
+        res.json(result)
+    } catch (error) {
+        throw error
+    }
+})
+
+//连表查询单个字段
+router.get('/getOrderSummary3', async (req, res) => {
+    try {
+        const orderCollection = await getCollection('t_database', 'order3')
+        // const productionCollection = await getCollection('t_database', 'product')
+
+        const pipeline = [
+            {
+                $match: {
+                    orderdate: {
+                        $gte: new Date("2020-01-01T00:00:00Z"),
+                        $lt: new Date("2021-01-01T00:00:00Z"),
+                    }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'product', //要连接的集合
+                    localField: 'product_id', //输入文档的字段
+                    foreignField: 'id', //被连接集合中的字段
+                    as: 'product_mapping' //输出的数组字段名
+                }
+            },
+            {
+                $set: {
+                    product_mapping: { $first: '$product_mapping' }
+                }
+            },
+            {
+                $set: {
+                    product_name: "$product_mapping.name",
+                    product_category: "$product_mapping.category",
+                },
+            },
+            { $unset: ["_id", "product_id", "product_mapping"] }
+        ]
+        const result = await orderCollection.aggregate(pipeline).toArray()
+        res.json(result)
+    } catch (error) {
+        throw error
+    }
+})
+
+//连表查询多个字段
+router.get('/getOrderSummary4', async (req, res) => {
+    try {
+        // const orderCollection = await getCollection('t_database', 'order4')
+        const productionCollection = await getCollection('t_database', 'product2')
+
+        const embedded_pl = [
+            {
+                $match: {
+                    $expr: {
+                        $and: [
+                            { $eq: ["$product_name", "$$prdname"] },
+                            { $eq: ["$product_variation", "$$prdvartn"] }
+                        ]//匹配条件同时满足order4.product_name == product2.prdname order4.product_variation == product2.prdvartn
+                    }
+                },
+
+            },
+            {
+                $match: {
+                    orderdate: {
+                        $gte: new Date("2020-01-01T00:00:00Z"),
+                        $lt: new Date("2021-01-01T00:00:00Z"),
+                    },
+                }
+            },
+            {
+                $unset: ["_id", "product_name", "product_variation"]
+            }
+        ]
+        const pipeline = [
+            {
+                $lookup: {
+                    from: "order4",//连接order4
+                    let: {
+                        prdname: "$name",
+                        prdvartn: "$variation"
+                    },//product2.name 换成prdname, product2.variation换成prdvartn
+                    pipeline: embedded_pl,
+                    as: "orders"
+                }
+            },
+            {
+                $match: {
+                    orders: { $ne: [] }
+                }
+            },
+            {
+                $unset: ["_id", "description"],
+            }
+        ]
+        const result = await productionCollection.aggregate(pipeline).toArray()
+        res.json(result)
+    } catch (error) {
+        throw error
+    }
+})
 module.exports = router
