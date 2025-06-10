@@ -3,8 +3,6 @@ module.exports = (db) => {
     const collection = db.collection('menu')
     return {
         findAll: async (queryParams) => {
-            console.log(queryParams, 5);
-
             /*
                 find(query,projection)
                 query:

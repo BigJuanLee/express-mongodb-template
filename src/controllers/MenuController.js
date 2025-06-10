@@ -1,10 +1,10 @@
 //控制层，接收参数传给服务层
-module.exports = (userService) => {
+module.exports = (menuService) => {
     return {
         getMenus: async (req, res) => {
             try {
                 const { searchKey, sortBy, page, pageSize } = req.query
-                const menu = await userService.getMenus({ searchKey, sortBy, page, pageSize })
+                const menu = await menuService.getMenus({ searchKey, sortBy, page, pageSize })
                 res.json(menu)
             } catch (err) {
                 res.status(500).json({ error: err.message })
@@ -13,7 +13,7 @@ module.exports = (userService) => {
         addMenuItem: async (req, res) => {
             try {
                 const { name, shape } = req.body
-                const menu = await userService.addMenuItem(name, shape)
+                const menu = await menuService.addMenuItem(name, shape)
                 res.json(menu)
             } catch (err) {
                 res.status(500).json({ error: err.message })
@@ -23,7 +23,7 @@ module.exports = (userService) => {
         addMenuItems: async (req, res) => {
             try {
                 const { docs } = req.body
-                const menu = await userService.addMenuItems(docs)
+                const menu = await menuService.addMenuItems(docs)
                 res.json(menu)
             } catch (err) {
                 res.status(500).json({ error: err.message })

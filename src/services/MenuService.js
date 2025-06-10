@@ -1,14 +1,14 @@
 //服务层，处理业务数据
-module.exports = (userModel) => {
+module.exports = (menuModel) => {
     return {
         getMenus: async queryParams => {
-            return userModel.findAll(queryParams)
+            return menuModel.findAll(queryParams)
         },
         addMenuItem: async (name, shape) => {
-            return userModel.addMenuItem(name, shape)
+            return menuModel.addMenuItem(name, shape)
         },
         addMenuItems: async docs => {
-            return userModel.addMenuItems(docs)
+            return menuModel.addMenuItems(docs)
         }
     }
 }
